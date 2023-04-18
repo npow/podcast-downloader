@@ -172,7 +172,6 @@ def process_rss_source(rss_source, collection_name, DOWNLOADS_LIMITS, CONFIGURAT
 
         for rss_entry in tqdm(reversed(missing_files_links), total=len(missing_files_links)):
             path = to_name_function(rss_entry)
-            Episode.upsert_episode(path=path, title=rss_entry.title, link=rss_entry.link, text="", collection_name=rss_source["name"])
 
             if path in downloaded_files:
                 continue
@@ -182,6 +181,8 @@ def process_rss_source(rss_source, collection_name, DOWNLOADS_LIMITS, CONFIGURAT
 
             download_files(rss_source_path, rss_entry)
             DOWNLOADS_LIMITS -= 1
+
+            Episode.upsert_episode(path=path, title=rss_entry.title, link=rss_entry.link, text="", collection_name=rss_source["name"])
     else:
         pass
 

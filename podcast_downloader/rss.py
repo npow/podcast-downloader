@@ -9,7 +9,7 @@ import unicodedata
 import feedparser
 
 
-FILE_NAME_CHARACTER_LIMIT = 255
+FILE_NAME_CHARACTER_LIMIT = 225
 
 
 @dataclass
