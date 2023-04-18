@@ -1,4 +1,5 @@
 import os
+from prefect import flow, task, unmapped
 from typing import Callable, Dict, Iterable
 import urllib
 import argparse
@@ -9,6 +10,7 @@ import joblib
 from tqdm import tqdm
 from functools import partial
 from . import configuration
+from .db import Episode
 
 from podcast_downloader.configuration import (
     configuration_verification,
@@ -108,11 +110,13 @@ def configuration_to_function_rss_to_name(
     return partial(file_template_to_file_name, configuration_value)
 
 
-def process_rss_source(rss_source, DOWNLOADS_LIMITS):
+@task(task_run_name="{collection_name}")
+def process_rss_source(rss_source, collection_name, DOWNLOADS_LIMITS, CONFIGURATION):
     rss_source_name = rss_source[configuration.CONFIG_PODCASTS_NAME]
     rss_source_path = os.path.expanduser(
         rss_source[configuration.CONFIG_PODCASTS_PATH]
     )
+    os.makedirs(rss_source_path, exist_ok=True)
     rss_source_link = rss_source[configuration.CONFIG_PODCASTS_RSS_LINK]
     rss_disable = rss_source.get(configuration.CONFIG_PODCASTS_DISABLE, False)
     rss_file_name_template_value = rss_source.get(
@@ -166,10 +170,11 @@ def process_rss_source(rss_source, DOWNLOADS_LIMITS):
     if missing_files_links:
         download_files = partial(download_rss_entity_to_path, to_name_function)
 
-        print(rss_source['name'], len(missing_files_links))
-        return
         for rss_entry in tqdm(reversed(missing_files_links), total=len(missing_files_links)):
-            if to_name_function(rss_entry) in downloaded_files:
+            path = to_name_function(rss_entry)
+            Episode.upsert_episode(path=path, title=rss_entry.title, link=rss_entry.link, text="", collection_name=rss_source["name"])
+
+            if path in downloaded_files:
                 continue
 
             if DOWNLOADS_LIMITS == 0:
@@ -180,7 +185,8 @@ def process_rss_source(rss_source, DOWNLOADS_LIMITS):
     else:
         pass
 
-if __name__ == "__main__":
+@flow(flow_run_name="download_podcasts")
+def main():
     import sys
 
     DEFAULT_CONFIGURATION = {
@@ -207,6 +213,7 @@ if __name__ == "__main__":
 
     RSS_SOURCES = CONFIGURATION[configuration.CONFIG_PODCASTS]
     DOWNLOADS_LIMITS = CONFIGURATION[configuration.CONFIG_DOWNLOADS_LIMIT]
+    process_rss_source.map(RSS_SOURCES, [x['name'] for x in RSS_SOURCES], DOWNLOADS_LIMITS, unmapped(CONFIGURATION))
 
-    from joblib import Parallel, delayed
-    Parallel(n_jobs=-1)(delayed(process_rss_source)(rss_source, DOWNLOADS_LIMITS) for rss_source in RSS_SOURCES)
+if __name__ == "__main__":
+    main()

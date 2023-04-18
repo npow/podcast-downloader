@@ -47,7 +47,12 @@ def str_to_filename(value: str) -> str:
     value = unicodedata.normalize("NFKC", value)
     value = re.sub(r"[\u0000-\u001F\u007F\*/:<>\?\\\|]", " ", value)
 
-    return value.strip()[:FILE_NAME_CHARACTER_LIMIT]
+    value.strip()
+    idx = value.find(",")
+    if idx > -1 and len(value) > FILE_NAME_CHARACTER_LIMIT:
+        value = value[:FILE_NAME_CHARACTER_LIMIT]
+
+    return value
 
 
 def file_template_to_file_name(name_template: str, entity: RSSEntity) -> str:
