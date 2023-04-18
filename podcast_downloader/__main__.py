@@ -5,6 +5,8 @@ import argparse
 import re
 import time
 
+import joblib
+from tqdm import tqdm
 from functools import partial
 from . import configuration
 
@@ -106,6 +108,78 @@ def configuration_to_function_rss_to_name(
     return partial(file_template_to_file_name, configuration_value)
 
 
+def process_rss_source(rss_source, DOWNLOADS_LIMITS):
+    rss_source_name = rss_source[configuration.CONFIG_PODCASTS_NAME]
+    rss_source_path = os.path.expanduser(
+        rss_source[configuration.CONFIG_PODCASTS_PATH]
+    )
+    rss_source_link = rss_source[configuration.CONFIG_PODCASTS_RSS_LINK]
+    rss_disable = rss_source.get(configuration.CONFIG_PODCASTS_DISABLE, False)
+    rss_file_name_template_value = rss_source.get(
+        configuration.CONFIG_FILE_NAME_TEMPLATE,
+        CONFIGURATION[configuration.CONFIG_FILE_NAME_TEMPLATE],
+    )
+    rss_if_directory_empty = rss_source.get(
+        configuration.CONFIG_IF_DIRECTORY_EMPTY,
+        CONFIGURATION[configuration.CONFIG_IF_DIRECTORY_EMPTY],
+    )
+    rss_podcast_extensions = rss_source.get(
+        configuration.CONFIG_PODCAST_EXTENSIONS,
+        CONFIGURATION[configuration.CONFIG_PODCAST_EXTENSIONS],
+    )
+
+    if rss_disable:
+        log('Skipping the "{}"', rss_source_name)
+        return
+
+    log('Checking "{}"', rss_source_name)
+
+    to_name_function = configuration_to_function_rss_to_name(
+        rss_file_name_template_value, rss_source
+    )
+    on_directory_empty = configuration_to_function_on_empty_directory(
+        rss_if_directory_empty
+    )
+
+    downloaded_files = list(
+        get_downloaded_files(
+            get_extensions_checker(rss_podcast_extensions), rss_source_path
+        )
+    )
+    last_downloaded_file = downloaded_files[0] if downloaded_files else None
+
+    download_limiter_function = (
+        partial(build_only_new_entities(to_name_function), last_downloaded_file)
+        if last_downloaded_file
+        else on_directory_empty
+    )
+
+    allow_link_types = list(set(rss_podcast_extensions.values()))
+    missing_files_links = compose(
+        list,
+        download_limiter_function,
+        partial(filter, build_only_allowed_filter_for_link_data(allow_link_types)),
+        flatten_rss_links_data,
+        get_raw_rss_entries_from_web,
+    )(rss_source_link)
+
+    if missing_files_links:
+        download_files = partial(download_rss_entity_to_path, to_name_function)
+
+        print(rss_source['name'], len(missing_files_links))
+        return
+        for rss_entry in tqdm(reversed(missing_files_links), total=len(missing_files_links)):
+            if to_name_function(rss_entry) in downloaded_files:
+                continue
+
+            if DOWNLOADS_LIMITS == 0:
+                continue
+
+            download_files(rss_source_path, rss_entry)
+            DOWNLOADS_LIMITS -= 1
+    else:
+        pass
+
 if __name__ == "__main__":
     import sys
 
@@ -134,85 +208,5 @@ if __name__ == "__main__":
     RSS_SOURCES = CONFIGURATION[configuration.CONFIG_PODCASTS]
     DOWNLOADS_LIMITS = CONFIGURATION[configuration.CONFIG_DOWNLOADS_LIMIT]
 
-    for rss_source in RSS_SOURCES:
-        rss_source_name = rss_source[configuration.CONFIG_PODCASTS_NAME]
-        rss_source_path = os.path.expanduser(
-            rss_source[configuration.CONFIG_PODCASTS_PATH]
-        )
-        rss_source_link = rss_source[configuration.CONFIG_PODCASTS_RSS_LINK]
-        rss_disable = rss_source.get(configuration.CONFIG_PODCASTS_DISABLE, False)
-        rss_file_name_template_value = rss_source.get(
-            configuration.CONFIG_FILE_NAME_TEMPLATE,
-            CONFIGURATION[configuration.CONFIG_FILE_NAME_TEMPLATE],
-        )
-        rss_if_directory_empty = rss_source.get(
-            configuration.CONFIG_IF_DIRECTORY_EMPTY,
-            CONFIGURATION[configuration.CONFIG_IF_DIRECTORY_EMPTY],
-        )
-        rss_podcast_extensions = rss_source.get(
-            configuration.CONFIG_PODCAST_EXTENSIONS,
-            CONFIGURATION[configuration.CONFIG_PODCAST_EXTENSIONS],
-        )
-
-        if rss_disable:
-            log('Skipping the "{}"', rss_source_name)
-            continue
-
-        log('Checking "{}"', rss_source_name)
-
-        to_name_function = configuration_to_function_rss_to_name(
-            rss_file_name_template_value, rss_source
-        )
-        on_directory_empty = configuration_to_function_on_empty_directory(
-            rss_if_directory_empty
-        )
-
-        downloaded_files = list(
-            get_downloaded_files(
-                get_extensions_checker(rss_podcast_extensions), rss_source_path
-            )
-        )
-        last_downloaded_file = downloaded_files[0] if downloaded_files else None
-
-        download_limiter_function = (
-            partial(build_only_new_entities(to_name_function), last_downloaded_file)
-            if last_downloaded_file
-            else on_directory_empty
-        )
-
-        allow_link_types = list(set(rss_podcast_extensions.values()))
-        missing_files_links = compose(
-            list,
-            download_limiter_function,
-            partial(filter, build_only_allowed_filter_for_link_data(allow_link_types)),
-            flatten_rss_links_data,
-            get_raw_rss_entries_from_web,
-        )(rss_source_link)
-
-        log('Last downloaded file "{}"', last_downloaded_file or "<none>")
-
-        if missing_files_links:
-            download_files = partial(download_rss_entity_to_path, to_name_function)
-
-            for rss_entry in reversed(missing_files_links):
-                if to_name_function(rss_entry) in downloaded_files:
-                    continue
-
-                if DOWNLOADS_LIMITS == 0:
-                    continue
-
-                log(
-                    '{}: Downloading file: "{}" saved as "{}"',
-                    rss_source_name,
-                    rss_entry.link,
-                    to_name_function(rss_entry),
-                )
-
-                download_files(rss_source_path, rss_entry)
-                DOWNLOADS_LIMITS -= 1
-        else:
-            log("{}: Nothing new", rss_source_name)
-
-        log("-" * 30)
-
-    log("Finished")
+    from joblib import Parallel, delayed
+    Parallel(n_jobs=-1)(delayed(process_rss_source)(rss_source, DOWNLOADS_LIMITS) for rss_source in RSS_SOURCES)
