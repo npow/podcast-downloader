@@ -1,5 +1,6 @@
 import os
 from prefect import flow, task, unmapped
+from prefect.tasks import exponential_backoff
 from typing import Callable, Dict, Iterable
 import urllib
 import argparse
@@ -110,7 +111,7 @@ def configuration_to_function_rss_to_name(
     return partial(file_template_to_file_name, configuration_value)
 
 
-@task(task_run_name="{collection_name}")
+@task(task_run_name="{collection_name}", retries=3, retry_delay_seconds=exponential_backoff(backoff_factor=10))
 def process_rss_source(rss_source, collection_name, DOWNLOADS_LIMITS, CONFIGURATION):
     rss_source_name = rss_source[configuration.CONFIG_PODCASTS_NAME]
     rss_source_path = os.path.expanduser(
@@ -182,7 +183,7 @@ def process_rss_source(rss_source, collection_name, DOWNLOADS_LIMITS, CONFIGURAT
             download_files(rss_source_path, rss_entry)
             DOWNLOADS_LIMITS -= 1
 
-            Episode.upsert_episode(path=path, title=rss_entry.title, link=rss_entry.link, text="", collection_name=rss_source["name"])
+            Episode.upsert_episode(path=path, title=rss_entry.title, link=rss_entry.link, collection_name=rss_source["name"])
     else:
         pass
 
